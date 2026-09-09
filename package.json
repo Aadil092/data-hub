@@ -4,18 +4,32 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:server": "npm --prefix server run dev",
+    "dev:python": "cd python-backend && .\\venv\\Scripts\\uvicorn main:app --reload --port 8000",
+    "python:install": "cd python-backend && .\\venv\\Scripts\\pip install -r requirements.txt",
+    "server:install": "npm --prefix server install",
+    "server:generate": "npm --prefix server run prisma:generate",
+    "server:push": "npm --prefix server run prisma:push",
+    "server:seed": "npm --prefix server run seed",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.113.0",
+    "canvas-confetti": "^1.9.4",
+    "lucide-react": "^1.39.0",
     "next": "16.3.4",
+    "papaparse": "^5.7.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "recharts": "^3.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^20",
+    "@types/papaparse": "^5.5.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
