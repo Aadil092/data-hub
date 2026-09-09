@@ -153,6 +153,19 @@ export const api = {
       body: formData,
     }),
 
+  // Supabase User Management Router (/api/users)
+  getUsers: (params: Record<string, any> = {}) => {
+    const query = new URLSearchParams(params).toString();
+    return apiRequest(`/users${query ? `?${query}` : ''}`);
+  },
+  getUser: (id: string) => apiRequest(`/users/${id}`),
+  createUser: (userData: { name: string; email: string; password: string; role?: string; isActive?: boolean; avatar?: string }) =>
+    apiRequest('/users', { method: 'POST', body: JSON.stringify(userData) }),
+  updateUser: (id: string, userData: { name?: string; email?: string; password?: string; role?: string; isActive?: boolean; avatar?: string }) =>
+    apiRequest(`/users/${id}`, { method: 'PUT', body: JSON.stringify(userData) }),
+  deleteUser: (id: string) =>
+    apiRequest(`/users/${id}`, { method: 'DELETE' }),
+
   // Admin
   getAdminUsers: () => apiRequest('/admin/users'),
   createAdminUser: (userData: { name: string; email: string; password: string; role?: string; isActive?: boolean }) =>

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth.routes';
+import userRoutes from './routes/user.routes';
 import contactRoutes from './routes/contact.routes';
 import importRoutes from './routes/import.routes';
 import exportRoutes from './routes/export.routes';
@@ -42,6 +43,7 @@ app.get('/api/health', (req, res) => {
 
 // Mount Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/contacts', contactRoutes);
 app.use('/api/import', importRoutes);
 app.use('/api/export', exportRoutes);
@@ -67,6 +69,7 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 app.listen(PORT, () => {
   console.log(` Server running on port ${PORT}`);
   console.log(` http://localhost:${PORT}/api/health`);
+  console.log(` Supabase User Router: http://localhost:${PORT}/api/users`);
 });
 
 export default app;
