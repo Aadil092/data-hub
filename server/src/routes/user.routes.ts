@@ -5,6 +5,7 @@ import { z } from 'zod';
 import supabase from '../config/supabase';
 import prisma from '../config/prisma';
 import { logAuditEvent } from '../services/audit.service';
+import { UserStore } from '../services/userStore.service';
 
 const router = Router();
 
@@ -72,7 +73,7 @@ router.get('/test-connection', async (_req: Request, res: Response): Promise<voi
 
 /**
  * GET /api/users
- * Retrieve all users from Supabase DB
+ * Retrieve all users (Merged from Supabase, Prisma, and UserStore)
  */
 router.get('/', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -81,78 +82,72 @@ router.get('/', async (req: Request, res: Response): Promise<void> => {
     const take = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
     const offset = (pageNum - 1) * take;
 
-    let query = supabase
-      .from('users')
-      .select('id, name, email, role, avatar, isActive, createdAt, updatedAt', { count: 'exact' });
+    const userMap = new Map<string, any>();
+
+    // 1. Seed with in-memory UserStore
+    const cachedUsers = UserStore.getAll();
+    cachedUsers.forEach((u) => {
+      userMap.set(u.email.toLowerCase(), { ...u });
+    });
+
+    // 2. Fetch from Supabase
+    try {
+      const { data: sUsers } = await supabase
+        .from('users')
+        .select('id, name, email, role, avatar, isActive, createdAt, updatedAt');
+
+      if (Array.isArray(sUsers)) {
+        sUsers.forEach((u: any) => {
+          const email = u.email.toLowerCase();
+          const existing = userMap.get(email);
+          userMap.set(email, { ...existing, ...u });
+        });
+      }
+    } catch (_) {}
+
+    // 3. Fetch from Prisma
+    try {
+      const pUsers = await prisma.user.findMany({
+        select: { id: true, name: true, email: true, role: true, avatar: true, isActive: true, createdAt: true, updatedAt: true },
+      });
+
+      if (Array.isArray(pUsers)) {
+        pUsers.forEach((u: any) => {
+          const email = u.email.toLowerCase();
+          const existing = userMap.get(email);
+          userMap.set(email, { ...existing, ...u });
+        });
+      }
+    } catch (_) {}
+
+    let allUsers = Array.from(userMap.values());
 
     if (role && (role === 'USER' || role === 'ADMIN')) {
-      query = query.eq('role', role);
+      allUsers = allUsers.filter((u) => u.role === role);
     }
 
     if (search && typeof search === 'string') {
-      const s = search.trim();
-      query = query.or(`name.ilike.%${s}%,email.ilike.%${s}%`);
+      const s = search.toLowerCase().trim();
+      allUsers = allUsers.filter(
+        (u) => (u.name && u.name.toLowerCase().includes(s)) || (u.email && u.email.toLowerCase().includes(s))
+      );
     }
 
-    const { data: users, count, error } = await query
-      .order('createdAt', { ascending: false })
-      .range(offset, offset + take - 1);
+    allUsers.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
 
-    if (error) {
-      // If table query in Supabase fails, try fallback to Prisma
-      try {
-        const whereClause: any = {};
-        if (role && (role === 'USER' || role === 'ADMIN')) whereClause.role = role;
-        if (search && typeof search === 'string') {
-          whereClause.OR = [
-            { name: { contains: search, mode: 'insensitive' } },
-            { email: { contains: search, mode: 'insensitive' } },
-          ];
-        }
-
-        const [pUsers, pTotal] = await Promise.all([
-          prisma.user.findMany({
-            where: whereClause,
-            select: { id: true, name: true, email: true, role: true, avatar: true, isActive: true, createdAt: true, updatedAt: true },
-            skip: offset,
-            take,
-            orderBy: { createdAt: 'desc' },
-          }),
-          prisma.user.count({ where: whereClause }),
-        ]);
-
-        res.json({
-          success: true,
-          users: pUsers,
-          pagination: {
-            page: pageNum,
-            limit: take,
-            total: pTotal,
-            totalPages: Math.ceil(pTotal / take),
-          },
-          source: 'prisma',
-        });
-        return;
-      } catch (prismaErr) {
-        res.status(500).json({
-          success: false,
-          message: 'Error fetching users from Supabase database.',
-          error,
-        });
-        return;
-      }
-    }
+    const total = allUsers.length;
+    const paginated = allUsers.slice(offset, offset + take);
 
     res.json({
       success: true,
-      users: users || [],
+      users: paginated,
       pagination: {
         page: pageNum,
         limit: take,
-        total: count || (users ? users.length : 0),
-        totalPages: Math.ceil((count || (users ? users.length : 0)) / take),
+        total,
+        totalPages: Math.ceil(total / take) || 1,
       },
-      source: 'supabase',
+      source: 'unified',
     });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Server error retrieving users.', error: error.message });

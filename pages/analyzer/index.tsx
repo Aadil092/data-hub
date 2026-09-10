@@ -2008,7 +2008,7 @@ export default function WebAnalyzerPage() {
                         onClick={() => {
                           if (typeof window !== 'undefined') {
                             sessionStorage.setItem('smart_import_preset', JSON.stringify(currentTable.allRows));
-                            router.push('/import');
+                            router.push('/smart-import');
                           }
                         }}
                         className="px-4 py-2 rounded-full bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold flex items-center gap-2 shadow-lg shadow-emerald-500/25 transition-all cursor-pointer"

@@ -35,8 +35,8 @@ export default function AppLayout({ children, title, subtitle, actionButton }: A
   const navigation = [
     { name: isAdmin ? 'Executive Dashboard' : 'Customer Dashboard', href: '/', icon: LayoutDashboard },
     { name: 'Contacts', href: '/contacts', icon: Users },
-    { name: 'Smart Import', href: '/import', icon: FileSpreadsheet, badge: '5-Step' },
-    { name: 'Import History', href: '/import/history', icon: History },
+    { name: 'Smart Import', href: '/smart-import', icon: FileSpreadsheet, badge: '5-Step' },
+    { name: 'Import History', href: '/smart-import/history', icon: History },
     { name: 'Google Sheets Sync', href: '/google-sync', icon: RefreshCw },
     { name: 'Web Data Analyzer', href: '/analyzer', icon: BarChart3 },
   ];

@@ -7,6 +7,7 @@ import supabase from '../config/supabase';
 import prisma from '../config/prisma';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { logAuditEvent } from '../services/audit.service';
+import { UserStore } from '../services/userStore.service';
 
 const router = Router();
 
@@ -33,23 +34,26 @@ router.post('/register', async (req, res: Response): Promise<void> => {
     const { name, email, password, role } = parseResult.data;
     const normalizedEmail = email.toLowerCase().trim();
 
-    // 1. Check if user already exists (Check Supabase first, then Prisma)
-    let existingUser = false;
-    try {
-      const { data: sUser } = await supabase
-        .from('users')
-        .select('id, email')
-        .eq('email', normalizedEmail)
-        .maybeSingle();
+    // 1. Check if user already exists (Check UserStore, Supabase, and Prisma)
+    let existingUser = !!UserStore.getByEmail(normalizedEmail);
 
-      if (sUser) existingUser = true;
-    } catch (_) {}
+    if (!existingUser) {
+      try {
+        const { data: sUser } = await supabase
+          .from('users')
+          .select('id, email')
+          .eq('email', normalizedEmail)
+          .maybeSingle();
+
+        if (sUser) existingUser = true;
+      } catch (_) { }
+    }
 
     if (!existingUser) {
       try {
         const pUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
         if (pUser) existingUser = true;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     if (existingUser) {
@@ -107,14 +111,31 @@ router.post('/register', async (req, res: Response): Promise<void> => {
       console.warn('Prisma sync skipped:', pErr.message);
     }
 
-    // If both failed because of DB connectivity, create minimal user object
+    // 4. Save to UserStore memory store
+    const userRecord = {
+      id: userId,
+      name: name.trim(),
+      email: normalizedEmail,
+      password: hashedPassword,
+      role: assignedRole as 'USER' | 'ADMIN',
+      avatar: null,
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+      _count: { contacts: 0, imports: 0 },
+    };
+
+    UserStore.add(userRecord);
+
     if (!createdUser) {
       createdUser = {
         id: userId,
         name: name.trim(),
         email: normalizedEmail,
         role: assignedRole,
+        isActive: true,
         createdAt: now,
+        _count: { contacts: 0, imports: 0 },
       };
     }
 
@@ -134,13 +155,20 @@ router.post('/register', async (req, res: Response): Promise<void> => {
         details: { email: createdUser.email, role: createdUser.role, targetDB: 'Supabase' },
         ipAddress: req.ip,
       });
-    } catch (_) {}
+    } catch (_) { }
 
     res.status(201).json({
       success: true,
       token,
-      user: createdUser,
-      message: 'Account registered and saved to Supabase successfully!',
+      user: {
+        id: createdUser.id,
+        name: createdUser.name,
+        email: createdUser.email,
+        role: createdUser.role,
+        isActive: createdUser.isActive ?? true,
+        createdAt: createdUser.createdAt || now,
+      },
+      message: 'Account registered and saved successfully!',
     });
   } catch (error: any) {
     console.error('Register error:', error);
@@ -183,7 +211,13 @@ router.post('/login', async (req, res: Response): Promise<void> => {
       }
     }
 
-    // 3. Fallback for demo users if database is empty/offline
+    // 3. Try UserStore
+    if (!user) {
+      const cached = UserStore.getByEmail(normalizedEmail);
+      if (cached) user = cached;
+    }
+
+    // 4. Fallback for demo users if database is empty/offline
     if (!user) {
       if (
         (normalizedEmail === 'admin@datahub.local' && password === 'admin123') ||
@@ -193,7 +227,7 @@ router.post('/login', async (req, res: Response): Promise<void> => {
         const secret = process.env.JWT_SECRET || 'datahub-super-secret-jwt-key-2026';
         const demoUser = {
           id: isAdmin ? 'admin-demo-id' : 'user-demo-id',
-          name: isAdmin ? 'System Administrator' : 'Jane Cooper',
+          name: isAdmin ? 'System Administrator' : 'Aadil Khan',
           email: normalizedEmail,
           role: (isAdmin ? 'ADMIN' : 'USER') as 'ADMIN' | 'USER',
           avatar: isAdmin
@@ -223,10 +257,32 @@ router.post('/login', async (req, res: Response): Promise<void> => {
       return;
     }
 
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      res.status(401).json({ success: false, message: 'Invalid email or password.' });
-      return;
+    // Check password if hashed password exists
+    if (user.password) {
+      const match = await bcrypt.compare(password, user.password);
+      if (!match) {
+        // Also check if matches standard demo passwords
+        if (
+          !(
+            (normalizedEmail === 'admin@datahub.local' && password === 'admin123') ||
+            (normalizedEmail === 'user@datahub.local' && password === 'user123')
+          )
+        ) {
+          res.status(401).json({ success: false, message: 'Invalid email or password.' });
+          return;
+        }
+      }
+    } else {
+      // Demo accounts without hashed passwords
+      if (
+        !(
+          (normalizedEmail === 'admin@datahub.local' && password === 'admin123') ||
+          (normalizedEmail === 'user@datahub.local' && password === 'user123')
+        )
+      ) {
+        res.status(401).json({ success: false, message: 'Invalid email or password.' });
+        return;
+      }
     }
 
     const secret = process.env.JWT_SECRET || 'datahub-super-secret-jwt-key-2026';
@@ -245,7 +301,7 @@ router.post('/login', async (req, res: Response): Promise<void> => {
         details: { email: user.email },
         ipAddress: req.ip,
       });
-    } catch (_) {}
+    } catch (_) { }
 
     res.json({
       success: true,
@@ -280,7 +336,7 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response): Promise
         res.json({ success: true, user: sUser });
         return;
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // Fallback Prisma
     try {
@@ -293,7 +349,14 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response): Promise
         res.json({ success: true, user });
         return;
       }
-    } catch (_) {}
+    } catch (_) { }
+
+    // Fallback UserStore
+    const cached = UserStore.getById(userId);
+    if (cached) {
+      res.json({ success: true, user: cached });
+      return;
+    }
 
     res.json({
       success: true,
@@ -305,3 +368,4 @@ router.get('/me', authenticate, async (req: AuthRequest, res: Response): Promise
 });
 
 export default router;
+

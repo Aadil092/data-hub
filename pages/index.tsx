@@ -125,7 +125,7 @@ export default function Dashboard() {
         subtitle={`Welcome back, ${user?.name || 'Valued Customer'} • Centralized Contact & Import Workspace`}
         actionButton={
           <Link
-            href="/import"
+            href="/smart-import"
             className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 text-white rounded-full text-xs font-semibold shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02]"
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -162,7 +162,7 @@ export default function Dashboard() {
 
               {/* 2. Smart Import (5-Step) */}
               <Link
-                href="/import"
+                href="/smart-import"
                 className="glass-card p-5 rounded-2xl border border-slate-800 hover:border-purple-500/50 transition-all group hover:scale-[1.02] relative overflow-hidden"
               >
                 <div className="w-10 h-10 rounded-xl bg-purple-500/15 text-purple-400 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
@@ -182,7 +182,7 @@ export default function Dashboard() {
 
               {/* 3. Import History */}
               <Link
-                href="/import/history"
+                href="/smart-import/history"
                 className="glass-card p-5 rounded-2xl border border-slate-800 hover:border-amber-500/50 transition-all group hover:scale-[1.02] relative overflow-hidden"
               >
                 <div className="w-10 h-10 rounded-xl bg-amber-500/15 text-amber-400 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
@@ -258,7 +258,7 @@ export default function Dashboard() {
                   <h3 className="text-base font-bold text-white">Recent Ingestion Batches</h3>
                   <p className="text-xs text-slate-400">Latest CSV and Excel imports</p>
                 </div>
-                <Link href="/import/history" className="text-xs text-amber-400 hover:underline">
+                <Link href="/smart-import/history" className="text-xs text-amber-400 hover:underline">
                   All Batches &rarr;
                 </Link>
               </div>
@@ -313,11 +313,10 @@ export default function Dashboard() {
                       <p className="text-[11px] text-slate-400">{c.email || c.company || '—'}</p>
                     </div>
                     <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                        c.status === 'CUSTOMER'
-                          ? 'bg-emerald-500/15 text-emerald-400'
-                          : 'bg-blue-500/15 text-blue-400'
-                      }`}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${c.status === 'CUSTOMER'
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-blue-500/15 text-blue-400'
+                        }`}
                     >
                       {c.status}
                     </span>
@@ -345,7 +344,7 @@ export default function Dashboard() {
             <span>User Management</span>
           </Link>
           <Link
-            href="/import"
+            href="/smart-import"
             className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-500 text-white rounded-full text-xs font-semibold shadow-lg shadow-emerald-500/25 transition-all hover:scale-[1.02]"
           >
             <FileSpreadsheet className="w-4 h-4" />
@@ -492,7 +491,7 @@ export default function Dashboard() {
 
             <div className="space-y-2.5">
               <Link
-                href="/import"
+                href="/smart-import"
                 className="flex items-center justify-between p-3 rounded-xl bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/20 transition-all text-xs font-medium text-blue-300 group"
               >
                 <div className="flex items-center gap-3">
@@ -566,13 +565,12 @@ export default function Dashboard() {
                       <td className="py-2.5 px-3">{c.company || '—'}</td>
                       <td className="py-2.5 px-3">
                         <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                            c.status === 'CUSTOMER'
-                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
-                              : c.status === 'PROSPECT'
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${c.status === 'CUSTOMER'
+                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/20'
+                            : c.status === 'PROSPECT'
                               ? 'bg-blue-500/15 text-blue-400 border border-blue-500/20'
                               : 'bg-amber-500/15 text-amber-400 border border-amber-500/20'
-                          }`}
+                            }`}
                         >
                           {c.status}
                         </span>

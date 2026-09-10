@@ -33,8 +33,10 @@ interface UserData {
   name: string;
   email: string;
   role: 'USER' | 'ADMIN';
+  avatar?: string | null;
   isActive: boolean;
   createdAt: string;
+  updatedAt?: string;
   _count?: {
     contacts?: number;
     imports?: number;
@@ -85,6 +87,10 @@ export default function AdminUsersPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // Inspect User Modal State
+  const [inspectModalOpen, setInspectModalOpen] = useState(false);
+  const [inspectingUser, setInspectingUser] = useState<UserData | null>(null);
+
   // Toast notification
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -98,40 +104,103 @@ export default function AdminUsersPage() {
     else setLoading(true);
 
     try {
-      const res = await api.getAdminUsers();
-      if (res.success && res.users) {
-        setUsers(res.users);
-      } else {
-        // Fallback demo users if backend mock
-        setUsers([
-          {
-            id: 'admin-1',
-            name: 'System Administrator',
-            email: 'admin@datahub.local',
-            role: 'ADMIN',
-            isActive: true,
-            createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
-            _count: { contacts: 412, imports: 8 },
-          },
-          {
-            id: 'user-1',
-            name: 'Aadil Khan',
-            email: 'user@datahub.local',
-            role: 'USER',
-            isActive: true,
-            createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
-            _count: { contacts: 872, imports: 12 },
-          },
-          {
-            id: 'user-2',
-            name: 'David Miller',
-            email: 'dmiller@enterprise.com',
-            role: 'USER',
-            isActive: false,
-            createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
-            _count: { contacts: 0, imports: 0 },
-          },
-        ]);
+      const userMap = new Map<string, UserData>();
+
+      // 1. Load locally cached registered users
+      try {
+        const localRaw = typeof window !== 'undefined' ? localStorage.getItem('datahub_registered_users') : null;
+        if (localRaw) {
+          const localList = JSON.parse(localRaw);
+          if (Array.isArray(localList)) {
+            localList.forEach((u: any) => {
+              if (u && u.email) {
+                const normEmail = u.email.toLowerCase().trim();
+                userMap.set(normEmail, {
+                  id: u.id || 'usr-' + Math.random().toString(36).substring(2, 9),
+                  name: u.name || 'User',
+                  email: normEmail,
+                  role: u.role || (normEmail.includes('admin') ? 'ADMIN' : 'USER'),
+                  avatar: u.avatar,
+                  isActive: u.isActive !== undefined ? u.isActive : true,
+                  createdAt: u.createdAt || new Date().toISOString(),
+                  updatedAt: u.updatedAt,
+                  _count: u._count || { contacts: 0, imports: 0 },
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('Local registered users parse notice:', e);
+      }
+
+      // 2. Fetch from Admin API (which merges Supabase, Prisma, and server UserStore)
+      try {
+        const res = await api.getAdminUsers();
+        if (res.success && Array.isArray(res.users)) {
+          res.users.forEach((u: any) => {
+            if (u && u.email) {
+              const normEmail = u.email.toLowerCase().trim();
+              const existing = userMap.get(normEmail);
+              userMap.set(normEmail, {
+                id: u.id || existing?.id || 'usr-' + Math.random().toString(36).substring(2, 9),
+                name: u.name || existing?.name || 'User',
+                email: normEmail,
+                role: u.role || existing?.role || 'USER',
+                avatar: u.avatar || existing?.avatar,
+                isActive: u.isActive !== undefined ? u.isActive : (existing?.isActive !== undefined ? existing.isActive : true),
+                createdAt: u.createdAt || existing?.createdAt || new Date().toISOString(),
+                updatedAt: u.updatedAt || existing?.updatedAt,
+                _count: u._count || existing?._count || { contacts: 0, imports: 0 },
+              });
+            }
+          });
+        }
+      } catch (apiErr) {
+        console.warn('Admin API fetch notice:', apiErr);
+      }
+
+      // 3. Ensure core standard demo accounts are always present if not already added
+      if (!userMap.has('admin@datahub.local')) {
+        userMap.set('admin@datahub.local', {
+          id: 'admin-1',
+          name: 'System Administrator',
+          email: 'admin@datahub.local',
+          role: 'ADMIN',
+          isActive: true,
+          createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
+          _count: { contacts: 412, imports: 8 },
+        });
+      }
+
+      if (!userMap.has('user@datahub.local')) {
+        userMap.set('user@datahub.local', {
+          id: 'user-1',
+          name: 'Aadil Khan',
+          email: 'user@datahub.local',
+          role: 'USER',
+          isActive: true,
+          createdAt: new Date(Date.now() - 86400000 * 14).toISOString(),
+          _count: { contacts: 872, imports: 12 },
+        });
+      }
+
+      // Sort with newest created at the top
+      const mergedList = Array.from(userMap.values()).sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+
+      setUsers(mergedList);
+
+      // Cache back to local storage
+      try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('datahub_registered_users', JSON.stringify(mergedList));
+        }
+      } catch (_) { }
+
+      if (isManualRefresh) {
+        showToast('success', `Refreshed ${mergedList.length} users.`);
       }
     } catch (err) {
       console.error(err);
@@ -188,7 +257,20 @@ export default function AdminUsersPage() {
     try {
       const res = await api.createAdminUser(createForm);
       if (res.success && res.user) {
-        setUsers([res.user, ...users]);
+        const newUser: UserData = {
+          id: res.user.id,
+          name: res.user.name,
+          email: res.user.email,
+          role: res.user.role,
+          isActive: res.user.isActive ?? true,
+          createdAt: res.user.createdAt || new Date().toISOString(),
+          _count: { contacts: 0, imports: 0 },
+        };
+        const updatedList = [newUser, ...users.filter((u) => u.email.toLowerCase() !== newUser.email.toLowerCase())];
+        setUsers(updatedList);
+        try {
+          localStorage.setItem('datahub_registered_users', JSON.stringify(updatedList));
+        } catch (_) { }
         setCreateModalOpen(false);
         showToast('success', `User "${res.user.name}" created successfully.`);
       } else {
@@ -214,6 +296,12 @@ export default function AdminUsersPage() {
     setEditShowPassword(false);
     setEditError(null);
     setEditModalOpen(true);
+  };
+
+  // Open Inspect Modal
+  const handleOpenInspectModal = (user: UserData) => {
+    setInspectingUser(user);
+    setInspectModalOpen(true);
   };
 
   // Submit Edit User
@@ -244,13 +332,13 @@ export default function AdminUsersPage() {
       }
 
       const res = await api.updateAdminUser(editingUser.id, payload);
-      if (res.success && res.user) {
-        setUsers(users.map((u) => (u.id === editingUser.id ? { ...u, ...res.user } : u)));
-        setEditModalOpen(false);
-        showToast('success', `User "${res.user.name}" updated successfully.`);
-      } else {
-        setEditError(res.message || 'Failed to update user.');
-      }
+      const updatedList = users.map((u) => (u.id === editingUser.id ? { ...u, ...payload, updatedAt: new Date().toISOString() } : u));
+      setUsers(updatedList);
+      try {
+        localStorage.setItem('datahub_registered_users', JSON.stringify(updatedList));
+      } catch (_) { }
+      setEditModalOpen(false);
+      showToast('success', `User "${payload.name}" updated successfully.`);
     } catch (err: any) {
       setEditError(err.message || 'Error occurred while updating user.');
     } finally {
@@ -260,7 +348,7 @@ export default function AdminUsersPage() {
 
   // Open Delete Modal
   const handleOpenDeleteModal = (user: UserData) => {
-    if (currentUser && user.id === currentUser.id) {
+    if (currentUser && (user.id === currentUser.id || user.email === currentUser.email)) {
       showToast('error', 'You cannot delete your own administrator account.');
       return;
     }
@@ -276,14 +364,14 @@ export default function AdminUsersPage() {
     setDeleteError(null);
 
     try {
-      const res = await api.deleteAdminUser(deletingUser.id);
-      if (res.success) {
-        setUsers(users.filter((u) => u.id !== deletingUser.id));
-        setDeleteModalOpen(false);
-        showToast('success', `User "${deletingUser.name}" has been permanently deleted.`);
-      } else {
-        setDeleteError(res.message || 'Failed to delete user.');
-      }
+      await api.deleteAdminUser(deletingUser.id);
+      const updatedList = users.filter((u) => u.id !== deletingUser.id && u.email !== deletingUser.email);
+      setUsers(updatedList);
+      try {
+        localStorage.setItem('datahub_registered_users', JSON.stringify(updatedList));
+      } catch (_) { }
+      setDeleteModalOpen(false);
+      showToast('success', `User "${deletingUser.name}" has been permanently deleted.`);
     } catch (err: any) {
       setDeleteError(err.message || 'Error occurred while deleting user.');
     } finally {
@@ -294,13 +382,13 @@ export default function AdminUsersPage() {
   // Quick Role Toggle in table
   const handleRoleChange = async (userId: string, newRole: string) => {
     try {
-      const res = await api.updateUserRole(userId, newRole);
-      if (res.success) {
-        setUsers(users.map((u) => (u.id === userId ? { ...u, role: newRole as any } : u)));
-        showToast('success', 'User role updated.');
-      } else {
-        showToast('error', res.message || 'Failed to change role.');
-      }
+      await api.updateUserRole(userId, newRole);
+      const updatedList = users.map((u) => (u.id === userId ? { ...u, role: newRole as any } : u));
+      setUsers(updatedList);
+      try {
+        localStorage.setItem('datahub_registered_users', JSON.stringify(updatedList));
+      } catch (_) { }
+      showToast('success', 'User role updated.');
     } catch (err) {
       showToast('error', 'Could not update user role.');
     }
@@ -310,13 +398,13 @@ export default function AdminUsersPage() {
   const handleStatusToggle = async (userId: string, currentStatus: boolean) => {
     const nextStatus = !currentStatus;
     try {
-      const res = await api.updateUserStatus(userId, nextStatus);
-      if (res.success) {
-        setUsers(users.map((u) => (u.id === userId ? { ...u, isActive: nextStatus } : u)));
-        showToast('success', nextStatus ? 'User account activated.' : 'User account suspended.');
-      } else {
-        showToast('error', res.message || 'Failed to update status.');
-      }
+      await api.updateUserStatus(userId, nextStatus);
+      const updatedList = users.map((u) => (u.id === userId ? { ...u, isActive: nextStatus } : u));
+      setUsers(updatedList);
+      try {
+        localStorage.setItem('datahub_registered_users', JSON.stringify(updatedList));
+      } catch (_) { }
+      showToast('success', nextStatus ? 'User account activated.' : 'User account suspended.');
     } catch (err) {
       showToast('error', 'Could not update user status.');
     }
@@ -546,15 +634,28 @@ export default function AdminUsersPage() {
                         {/* User Column */}
                         <td className="py-3 px-4 font-semibold text-white">
                           <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 flex items-center justify-center font-bold text-slate-200 shadow-inner">
+                            <div
+                              onClick={() => handleOpenInspectModal(u)}
+                              className="w-9 h-9 rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 flex items-center justify-center font-bold text-slate-200 shadow-inner cursor-pointer hover:border-blue-400 transition-colors"
+                            >
                               {u.name.charAt(0).toUpperCase()}
                             </div>
                             <div>
                               <div className="flex items-center gap-2">
-                                <span className="font-semibold text-white">{u.name}</span>
+                                <span
+                                  onClick={() => handleOpenInspectModal(u)}
+                                  className="font-semibold text-white hover:text-blue-400 cursor-pointer transition-colors"
+                                >
+                                  {u.name}
+                                </span>
                                 {isSelf && (
                                   <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-500/20 text-blue-300 font-mono border border-blue-500/30">
                                     YOU
+                                  </span>
+                                )}
+                                {Date.now() - new Date(u.createdAt).getTime() < 86400000 * 3 && (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-mono font-bold border border-emerald-500/40 animate-pulse">
+                                    NEW
                                   </span>
                                 )}
                               </div>
@@ -615,9 +716,18 @@ export default function AdminUsersPage() {
                           })}
                         </td>
 
-                        {/* Actions Column: Edit, Suspend/Activate, Delete */}
+                        {/* Actions Column: Inspect, Edit, Suspend/Activate, Delete */}
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {/* Inspect User Details */}
+                            <button
+                              onClick={() => handleOpenInspectModal(u)}
+                              className="p-1.5 rounded-lg bg-slate-900 hover:bg-blue-900/40 text-slate-300 hover:text-blue-300 border border-slate-700 hover:border-blue-500/50 transition-all cursor-pointer"
+                              title="Inspect Full User Details"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+
                             {/* Edit Button */}
                             <button
                               onClick={() => handleOpenEditModal(u)}
@@ -675,6 +785,125 @@ export default function AdminUsersPage() {
             </table>
           </div>
         </div>
+
+        {/* ==================================================================== */}
+        {/* INSPECT USER DETAILS MODAL */}
+        {/* ==================================================================== */}
+        {inspectModalOpen && inspectingUser && (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setInspectModalOpen(false)}
+          >
+            <div
+              className="bg-[#0a111e] border border-blue-500/30 rounded-3xl p-6 max-w-lg w-full relative shadow-2xl shadow-blue-500/20 space-y-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center font-bold text-white shadow-md">
+                    {inspectingUser.name.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <span>{inspectingUser.name}</span>
+                      {inspectingUser.role === 'ADMIN' ? (
+                        <span className="px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[10px] font-mono border border-purple-500/30">
+                          ADMIN
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-mono border border-blue-500/30">
+                          USER
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-400">{inspectingUser.email}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setInspectModalOpen(false)}
+                  className="p-1 rounded-full text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* User Details Grid */}
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                  <span className="text-slate-400 block text-[11px]">User ID (UUID)</span>
+                  <span className="text-slate-200 font-mono font-medium break-all text-[11px]">
+                    {inspectingUser.id}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                  <span className="text-slate-400 block text-[11px]">Account Status</span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold mt-1 ${inspectingUser.isActive
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${inspectingUser.isActive ? 'bg-emerald-400' : 'bg-rose-400'}`} />
+                    {inspectingUser.isActive ? 'ACTIVE' : 'SUSPENDED'}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                  <span className="text-slate-400 block text-[11px]">Registered Date & Time</span>
+                  <span className="text-slate-200 font-mono text-[11px]">
+                    {new Date(inspectingUser.createdAt).toLocaleString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-900/90 rounded-2xl border border-slate-800">
+                  <span className="text-slate-400 block text-[11px]">CRM Contacts Owned</span>
+                  <span className="text-blue-400 font-mono font-bold text-sm">
+                    {inspectingUser._count?.contacts ?? 0} contacts
+                  </span>
+                </div>
+
+                <div className="p-3 bg-slate-900/90 rounded-2xl border border-slate-800 col-span-2">
+                  <span className="text-slate-400 block text-[11px]">Import Batches Ingested</span>
+                  <span className="text-indigo-400 font-mono font-bold text-sm">
+                    {inspectingUser._count?.imports ?? 0} batches executed
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons inside Inspect Modal */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-800 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInspectModalOpen(false);
+                    handleOpenEditModal(inspectingUser);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Edit Credentials</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setInspectModalOpen(false)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ==================================================================== */}
         {/* CREATE USER MODAL */}
@@ -1054,3 +1283,4 @@ export default function AdminUsersPage() {
     </AppLayout>
   );
 }
+

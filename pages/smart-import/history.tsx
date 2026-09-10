@@ -95,7 +95,7 @@ export default function ImportHistoryPage() {
       subtitle="Complete chronological audit trail of all CSV & Excel ingestion runs"
       actionButton={
         <Link
-          href="/import"
+          href="/smart-import"
           className="flex items-center gap-2 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-lg shadow-blue-500/20 transition-all"
         >
           <FileSpreadsheet className="w-4 h-4" />

@@ -7,6 +7,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));
+const user_routes_1 = __importDefault(require("./routes/user.routes"));
 const contact_routes_1 = __importDefault(require("./routes/contact.routes"));
 const import_routes_1 = __importDefault(require("./routes/import.routes"));
 const export_routes_1 = __importDefault(require("./routes/export.routes"));
@@ -16,7 +17,7 @@ const admin_routes_1 = __importDefault(require("./routes/admin.routes"));
 const emailCampaign_routes_1 = __importDefault(require("./routes/emailCampaign.routes"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 // Middleware
 const corsOptions = {
     origin: (origin, callback) => {
@@ -41,6 +42,7 @@ app.get('/api/health', (req, res) => {
 });
 // Mount Routes
 app.use('/api/auth', auth_routes_1.default);
+app.use('/api/users', user_routes_1.default);
 app.use('/api/contacts', contact_routes_1.default);
 app.use('/api/import', import_routes_1.default);
 app.use('/api/export', export_routes_1.default);
@@ -63,5 +65,6 @@ app.use((err, req, res, next) => {
 app.listen(PORT, () => {
     console.log(` Server running on port ${PORT}`);
     console.log(` http://localhost:${PORT}/api/health`);
+    console.log(` Supabase User Router: http://localhost:${PORT}/api/users`);
 });
 exports.default = app;

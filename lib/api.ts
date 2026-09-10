@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001/api';
 
 export function getAuthToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -61,7 +61,7 @@ export async function apiRequest<T = any>(
       if (res.status === 404) {
         return {
           success: false,
-          message: `Endpoint ${endpoint} returned 404 Not Found. Make sure the DATAHUB backend server (data-hub/server) is running on port 5000.`,
+          message: `Endpoint ${endpoint} returned 404 Not Found. Make sure the DATAHUB backend server (data-hub/server) is running on port 5001.`,
         };
       }
       return { success: false, message: `Server error: ${res.statusText} (${res.status})` };
@@ -72,7 +72,7 @@ export async function apiRequest<T = any>(
     console.warn(`API Request to ${endpoint} failed:`, error?.message || error);
     return {
       success: false,
-      message: error?.message || 'Cannot reach DATAHUB backend server. Make sure the backend is running on port 5000.',
+      message: error?.message || 'Cannot reach DATAHUB backend server. Make sure the backend is running on port 5001.',
     };
   }
 }

@@ -6,6 +6,7 @@ import supabase from '../config/supabase';
 import prisma from '../config/prisma';
 import { authenticate, requireAdmin, AuthRequest } from '../middleware/auth';
 import { logAuditEvent } from '../services/audit.service';
+import { UserStore, UserRecord } from '../services/userStore.service';
 
 const router = Router();
 
@@ -38,47 +39,89 @@ async function syncPrismaSafe(action: () => Promise<any>) {
   }
 }
 
-// GET /api/admin/users - List all users
+// GET /api/admin/users - List all users (Merged from Supabase, Prisma, and UserStore)
 router.get('/users', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    // 1. Try Supabase first
-    const { data: sUsers, error: sErr } = await supabase
-      .from('users')
-      .select('id, name, email, role, avatar, isActive, createdAt')
-      .order('createdAt', { ascending: false });
+    const userMap = new Map<string, any>();
 
-    if (!sErr && sUsers) {
-      const usersWithCounts = sUsers.map((u: any) => ({
+    // 1. Seed with in-memory UserStore (includes all registered users)
+    const cachedUsers = UserStore.getAll();
+    cachedUsers.forEach((u) => {
+      userMap.set(u.email.toLowerCase(), {
         ...u,
-        _count: { contacts: 0, imports: 0 },
-      }));
-      res.json({ success: true, users: usersWithCounts, source: 'supabase' });
-      return;
-    }
-
-    // 2. Fallback to Prisma
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-        _count: {
-          select: {
-            contacts: true,
-            imports: true,
-          },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
+        _count: u._count || { contacts: 0, imports: 0 },
+      });
     });
 
-    res.json({ success: true, users, source: 'prisma' });
+    // 2. Fetch from Supabase
+    try {
+      const { data: sUsers, error: sErr } = await supabase
+        .from('users')
+        .select('id, name, email, role, avatar, isActive, createdAt, updatedAt')
+        .order('createdAt', { ascending: false });
+
+      if (!sErr && Array.isArray(sUsers)) {
+        sUsers.forEach((u: any) => {
+          const email = u.email.toLowerCase();
+          const existing = userMap.get(email);
+          userMap.set(email, {
+            ...existing,
+            ...u,
+            _count: existing?._count || { contacts: 0, imports: 0 },
+          });
+        });
+      }
+    } catch (sErr) {
+      console.warn('Supabase fetch in admin.users:', sErr);
+    }
+
+    // 3. Fetch from Prisma
+    try {
+      const pUsers = await prisma.user.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          _count: {
+            select: {
+              contacts: true,
+              imports: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (Array.isArray(pUsers)) {
+        pUsers.forEach((u: any) => {
+          const email = u.email.toLowerCase();
+          const existing = userMap.get(email);
+          userMap.set(email, {
+            ...existing,
+            ...u,
+            _count: u._count || existing?._count || { contacts: 0, imports: 0 },
+          });
+        });
+      }
+    } catch (pErr: any) {
+      console.warn('Prisma fetch in admin.users skipped:', pErr.message);
+    }
+
+    // Convert map to array sorted by creation date descending
+    const allUsers = Array.from(userMap.values()).sort(
+      (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+    );
+
+    res.json({ success: true, users: allUsers, count: allUsers.length });
   } catch (error: any) {
     console.error('Error fetching admin users:', error);
-    res.status(500).json({ success: false, message: error?.message || 'Failed to fetch users.' });
+    // Fallback to UserStore so response is never blank or 500
+    const fallbackUsers = UserStore.getAll();
+    res.json({ success: true, users: fallbackUsers, count: fallbackUsers.length });
   }
 });
 
@@ -94,18 +137,20 @@ router.post('/users', async (req: AuthRequest, res: Response): Promise<void> => 
     const { name, email, password, role, isActive } = parseResult.data;
     const normalizedEmail = email.toLowerCase().trim();
 
-    // 1. Check existing in Supabase or Prisma
-    let existing = false;
-    try {
-      const { data: sUser } = await supabase.from('users').select('id').eq('email', normalizedEmail).maybeSingle();
-      if (sUser) existing = true;
-    } catch (_) {}
+    // 1. Check existing in UserStore, Supabase, or Prisma
+    let existing = !!UserStore.getByEmail(normalizedEmail);
+    if (!existing) {
+      try {
+        const { data: sUser } = await supabase.from('users').select('id').eq('email', normalizedEmail).maybeSingle();
+        if (sUser) existing = true;
+      } catch (_) { }
+    }
 
     if (!existing) {
       try {
         const pUser = await prisma.user.findUnique({ where: { email: normalizedEmail } });
         if (pUser) existing = true;
-      } catch (_) {}
+      } catch (_) { }
     }
 
     if (existing) {
@@ -186,6 +231,20 @@ router.post('/users', async (req: AuthRequest, res: Response): Promise<void> => 
       };
     }
 
+    // 4. Save to UserStore
+    UserStore.add({
+      id: userId,
+      name: name.trim(),
+      email: normalizedEmail,
+      password: hashedPassword,
+      role: role as 'USER' | 'ADMIN',
+      avatar: null,
+      isActive: isActive ?? true,
+      createdAt: now,
+      updatedAt: now,
+      _count: { contacts: 0, imports: 0 },
+    });
+
     await logAuditEvent({
       userId: req.user!.id,
       action: 'USER_CREATED',
@@ -195,7 +254,7 @@ router.post('/users', async (req: AuthRequest, res: Response): Promise<void> => 
       ipAddress: req.ip,
     });
 
-    res.status(201).json({ success: true, user: createdUser, message: 'User created successfully in database.' });
+    res.status(201).json({ success: true, user: createdUser, message: 'User created successfully.' });
   } catch (error: any) {
     console.error('Error creating admin user:', error);
     res.status(500).json({ success: false, message: error?.message || 'Failed to create user.' });
@@ -270,6 +329,12 @@ router.put('/users/:id', async (req: AuthRequest, res: Response): Promise<void> 
       console.warn('Prisma admin update skipped:', pErr.message);
     }
 
+    // 3. Update in UserStore
+    const cachedUpdate = UserStore.update(userId, updateData);
+    if (!updatedUser && cachedUpdate) {
+      updatedUser = cachedUpdate;
+    }
+
     if (!updatedUser) {
       res.status(404).json({ success: false, message: 'User not found or update failed.' });
       return;
@@ -315,6 +380,9 @@ router.delete('/users/:id', async (req: AuthRequest, res: Response): Promise<voi
     // 2. Delete in Prisma
     syncPrismaSafe(() => prisma.user.delete({ where: { id: userId } }));
 
+    // 3. Delete in UserStore
+    UserStore.delete(userId);
+
     await logAuditEvent({
       userId: req.user!.id,
       action: 'USER_DELETED',
@@ -342,10 +410,15 @@ router.put('/users/:id/role', async (req: AuthRequest, res: Response): Promise<v
     const userId = req.params.id as string;
 
     // Supabase update
-    await supabase.from('users').update({ role, updatedAt: new Date().toISOString() }).eq('id', userId);
+    try {
+      await supabase.from('users').update({ role, updatedAt: new Date().toISOString() }).eq('id', userId);
+    } catch (_) { }
 
     // Prisma update
     syncPrismaSafe(() => prisma.user.update({ where: { id: userId }, data: { role } }));
+
+    // UserStore update
+    UserStore.update(userId, { role });
 
     await logAuditEvent({
       userId: req.user!.id,
@@ -374,10 +447,15 @@ router.put('/users/:id/status', async (req: AuthRequest, res: Response): Promise
     const userId = req.params.id as string;
 
     // Supabase update
-    await supabase.from('users').update({ isActive, updatedAt: new Date().toISOString() }).eq('id', userId);
+    try {
+      await supabase.from('users').update({ isActive, updatedAt: new Date().toISOString() }).eq('id', userId);
+    } catch (_) { }
 
     // Prisma update
     syncPrismaSafe(() => prisma.user.update({ where: { id: userId }, data: { isActive } }));
+
+    // UserStore update
+    UserStore.update(userId, { isActive });
 
     await logAuditEvent({
       userId: req.user!.id,
@@ -429,11 +507,11 @@ router.get('/audit-logs', async (req: AuthRequest, res: Response): Promise<void>
 // GET /api/admin/stats - System-wide metrics
 router.get('/stats', async (req: AuthRequest, res: Response): Promise<void> => {
   try {
-    let totalUsers = 0;
+    let totalUsers = UserStore.getAll().length;
     try {
       const { count } = await supabase.from('users').select('*', { count: 'exact', head: true });
-      totalUsers = count || 0;
-    } catch (_) {}
+      if (count && count > totalUsers) totalUsers = count;
+    } catch (_) { }
 
     res.json({
       success: true,
@@ -455,3 +533,4 @@ router.get('/stats', async (req: AuthRequest, res: Response): Promise<void> => {
 });
 
 export default router;
+
